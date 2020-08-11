@@ -1,0 +1,101 @@
+version "4.0.0"
+#include "json_parser/includer.zc"
+
+class json_event : eventhandler
+{
+    //store parser
+    json_parser parser;
+    //store parsed data
+    json_parsed_data jpd;
+
+    //this is a global function which return value of variable with specific name
+    //should be used if you dont have pointer to this event
+    static void get_info_static(string name, in out json_return_wrapper w)
+    {
+        StaticEventHandler p = eventhandler.find("json_event");
+        json_event(p).get_info(name, w);
+    }
+
+    //this is a global function which parse lump with specific name
+    //should be used if you dont have pointer to this event
+    static void parse_lump_static(string n)
+    {
+        StaticEventHandler p = eventhandler.find("json_event");
+        json_event(p).parse_lump(n);
+    }
+
+    //local function to parse lump
+    void parse_lump(string n)
+    {
+        if(!parser)
+            parser = json_parser(new("json_parser"));
+        if(jpd)
+            jpd.destroy();
+        jpd = json_parsed_data(new("json_parsed_data"));
+        parser.read_lump(n, jpd);
+    }
+
+    //local function to get variable value
+    void get_info(string name, in out json_return_wrapper w)
+    {
+        if(jpd)
+        {
+            console.printf("no parsed data to search something");
+            return;
+        }
+        json_parsed_data(jpd).get_data(name, w);
+    }
+    //debugg stuff
+    override void NetworkProcess(ConsoleEvent e)
+    {
+        if(e.name == "parse")
+        {
+            parser = json_parser(new("json_parser"));
+            jpd = json_parsed_data(new("json_parsed_data"));
+            parser.read_lump("example.json", jpd);
+        }
+
+        if(e.name == "json_info")
+        {
+            if(!jpd)
+            {
+                console.printf("no jpd");
+                return;
+            }
+            json_parsed_data(jpd).print_info();
+        }
+
+        Array<string> command;
+        e.Name.Split(command, ".");
+
+        if(command.Size() <= 1 || !(command [0] ~== "get_key"))
+            return;
+        json_return_wrapper wrap;
+
+        json_parsed_data(jpd).get_data(command[1], wrap);
+
+        switch(wrap.data_type)
+        {
+            case 0:
+            case JDT_UNKNOWN:
+            default:
+            break;
+
+            case JDT_NUMBER:
+                console.printf("key value \"%f\" ", wrap.number );
+            break;
+            case JDT_STRING:
+                console.printf("key value \"%s\" ", wrap.letters );
+            break;
+            case JDT_ARRAY:
+                console.printf("key array size text %i, number %i ", wrap.letters_set.size(), wrap.numbers_set.size() );
+            break;
+            case JDT_BOOL_FALSE:
+                console.printf("key number %f ", wrap.number);
+            break;
+            case JDT_BOOL_TRUE:
+                console.printf("key number %f ", wrap.number );
+            break;
+        }
+    }
+}

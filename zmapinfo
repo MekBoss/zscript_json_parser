@@ -1,0 +1,4 @@
+gameinfo
+{
+    addeventhandlers="json_event"
+}

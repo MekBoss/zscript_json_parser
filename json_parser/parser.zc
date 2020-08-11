@@ -1,0 +1,518 @@
+//parse "slightly modified" json file format
+//"modified" because it support comments
+class json_parser
+{
+    //store content of parsed lump here
+    private string parsed_lump;
+
+    //tries to guess data type using first characters of a data
+    private void get_data_type(int position, in out uint type)
+    {
+        int character = parsed_lump.byteat(position);
+        if( character >= ASCII_0 && character <= ASCII_9)
+            type = JDT_NUMBER;
+        else if( character == ASCII_DblQuote)
+            type = JDT_STRING;
+        else if( character == ASCII_BrackO)
+            type = JDT_ARRAY;
+        else if( character == ASCII_Lower_T || character == ASCII_T)
+            type = JDT_BOOL_TRUE;
+        else if (character == ASCII_Lower_F || character == ASCII_F)
+            type = JDT_BOOL_FALSE;
+        else if( character == ASCII_BraceO )
+            type = JDT_NESTED_OBJECT;
+        else if(character <= ASCII_Space)
+            type = JDT_NONE;
+            
+        else
+            type = JDT_UNKNOWN;
+    }
+
+    //search for the one of the symbols from specific array from  specific position with specific flags
+    //returns distance from current position to symbol
+    //or -1 in case of error
+    private int seek_for(int pos, in array<int> characters, seek_for_flags flags = 0)
+    {
+        if(parsed_lump && pos )
+        {
+            int length = 0;
+            for(; length <= parsed_lump.length(); length++)
+            {
+                if(pos + length >= parsed_lump.length() )
+                {
+                    length = -10000;
+                    break;
+                }
+                bool break_here = false;
+                int byte = parsed_lump.byteat(pos + length);
+                //ignore spaces
+                if( (flags & SFF_IGNORE_NON_PRINTABLE) && byte <= ASCII_Space)
+                    continue;
+                //breaks on spaces
+                if( (flags & SFF_SEQUENCE_END) && byte <= ASCII_Space)
+                    break;
+
+                for(uint i = 0; i < characters.size(); i++)
+                {
+                    if(byte == characters[i])
+                    {
+                        if(flags & SFF_SERIES_END)
+                            break;
+                        else
+                        {
+                            break_here = true;
+                            break;
+                        }
+                    }
+                    else if (byte != characters[i] && (flags & SFF_STOP_ON_NOT_MATCHING))
+                    {
+                        break_here = true;
+                        break;
+                    }
+                }
+
+                if(break_here)
+                    break;
+            }
+
+            return length+1;
+        }
+
+        return -1;
+    }
+
+    //throw error if meet data that parser didnt like
+    private void error_handler(int pos, error_types type = 0)
+    {
+        //count amount of lines
+        uint line_number = 1;
+        for(uint i = 0; i < pos; i++)
+        {
+            if(parsed_lump.byteat(i) == ASCII_LF)
+            line_number++;
+        }
+        if(type == ETF_NONE)
+        {
+            //now find out what exactly parser dont liked
+            string error = "";
+            array<int> dummy;
+            int len = seek_for(pos, dummy, SFF_SEQUENCE_END);
+            error = parsed_lump.mid(pos, len);
+            throwabortexception("JSON parser: unknown data \"%s\" in line %i", error, line_number);
+            return;
+        }
+        if(type == ETF_ARRAY)
+        {
+            throwabortexception("JSON parser: array at %i dont have closing bracket", line_number);
+        }
+
+        if(type == ETF_CURVED_BRACKET)
+        {
+            throwabortexception("JSON parser: closing bracket at %i", line_number);
+        }
+    }
+
+    private int number_length(int pos)
+    {
+        int len = 0;
+        for(; len < parsed_lump.length(); len++)
+        {
+            int b = parsed_lump.byteat(pos + len);
+            if(b >= ASCII_0 && b <= ASCII_9 || b == ASCII_Period)
+            continue;
+            else break;
+        }
+
+        return len;
+    }
+    //parse array aka all content between [ ] brackets
+    private void parse_array(int pos, in out json_key_value obj)
+    {
+        if(parsed_lump.byteat(pos) == ASCII_BrackO) pos++;
+        //firstly check, maybe its array of arrays
+        //if so break, because implementing of support for this
+        //without ability to overload functions and templates
+        //make code maintance impossible
+        int closing_bracket, opening_bracket;
+        array<int> seeking; seeking.clear();
+        seeking.push(ASCII_BrackC);
+        closing_bracket = seek_for(pos, seeking);
+        seeking[0] = ASCII_BrackC;//byte of ] are two step higher than byte of [
+        opening_bracket = seek_for(pos, seeking);
+
+        //if no closing bracket
+        if(closing_bracket < 0 || closing_bracket > parsed_lump.length() )
+            error_handler(pos, ETF_ARRAY);
+        
+        //or if it array of arrays
+        if(opening_bracket < closing_bracket && closing_bracket >= 0 && opening_bracket >= 0)
+            throwabortexception("JSON parser: array of arrays are unsupported");
+
+        uint data_type = JDT_NONE;
+        int counter = 0;
+        while(data_type == JDT_NONE)
+        {
+            get_data_type(pos + counter, data_type);
+            counter++;
+        }
+        counter--;
+        //read data here
+        if(data_type == JDT_STRING)
+        {
+            seeking.clear();
+            seeking.push(ASCII_DblQuote);
+        }
+        else if(data_type == JDT_NUMBER)
+        {
+            seeking.clear();
+            seeking.push(ASCII_0);
+            seeking.push(ASCII_1);
+            seeking.push(ASCII_2);
+            seeking.push(ASCII_3);
+            seeking.push(ASCII_4);
+            seeking.push(ASCII_5);
+            seeking.push(ASCII_6);
+            seeking.push(ASCII_7);
+            seeking.push(ASCII_8);
+            seeking.push(ASCII_9);
+            seeking.push(ASCII_0);
+            seeking.push(ASCII_Period);
+        }
+        else
+            throwabortexception("JSON parser: it only have support for string and number array");
+        
+        array<string> array_strings; array_strings.clear();
+        array<double> array_numbers; array_numbers.clear();
+        array<int> comma; comma.clear(); comma.push(ASCII_Comma); comma.push(ASCII_BrackC);
+
+        for(int array_pos = 0; array_pos < closing_bracket; array_pos++)
+        {
+            if(data_type == JDT_STRING)
+            {
+                //seek for the line ending
+                int beginning = seek_for(pos + array_pos, seeking);
+                if(beginning > 0)
+                    array_pos+=beginning;
+                int ending = seek_for(pos + array_pos + 1, seeking);
+                ending--;//get rid of quotation at the end of the line
+                if(json_debugger)
+                    console.printf("%s", parsed_lump.mid(pos+array_pos, abs(ending - beginning)));
+                if(beginning < 0 || ending < 0 || beginning == ending || beginning > closing_bracket || ending > closing_bracket)
+                    throwabortexception("JSON parser: double quote problem");
+                
+                string str = parsed_lump.mid(pos+beginning, abs(ending - beginning) );
+                array_strings.push(str);
+                int coma = seek_for(pos + ending + 1, comma, SFF_IGNORE_NON_PRINTABLE|SFF_STOP_ON_NOT_MATCHING);
+
+                if(coma < 0)
+                    error_handler(pos + ending + 1);
+                
+                array_pos += coma;
+            }
+            if(data_type == JDT_NUMBER)
+            {
+                int beginning = seek_for(pos + array_pos, seeking, SFF_IGNORE_NON_PRINTABLE);
+                beginning--;
+                array_pos += beginning;
+                int ending = seek_for(pos + array_pos + 1, seeking, SFF_STOP_ON_NOT_MATCHING|SFF_SERIES_END);
+                if(beginning < 0 || ending < 0)
+                    throwabortexception("JSON parser: number problem");
+
+                string str = parsed_lump.mid(pos + array_pos, abs(ending - beginning) );
+                if(json_debugger)
+                    console.printf("number is %s", str);
+                
+                array_numbers.push(str.todouble() );
+                int coma = seek_for(pos + ending + 1, comma, SFF_IGNORE_NON_PRINTABLE|SFF_STOP_ON_NOT_MATCHING);
+
+                if(coma < 0)
+                    error_handler(pos + ending + 1);
+                
+                array_pos += coma;
+            }
+        }
+        if(json_debugger)
+        {
+            if(array_strings.size() > 0)
+            {
+                for(int i = 0; i < array_strings.size(); i++)
+                {
+                    console.printf("array cell %i, value %s", i, array_strings[i]);
+                }
+            }
+            else if(array_numbers.size() > 0)
+            {
+                for(int i = 0; i < array_numbers.size(); i++)
+                {
+                    console.printf("array cell %i, value %f", i, array_numbers[i]);
+                }
+            }
+        }
+
+        if(data_type == JDT_STRING)
+            json_key_value(obj).all_jlines.move(array_strings);
+        if(data_type == JDT_NUMBER)
+            json_key_value(obj).all_numbers.move(array_numbers);
+    }
+
+    //does not have defaults, because "Out parameters cannot have default values"
+    void read_lump(string lump_name, in out json_parsed_data collection)
+    {
+        //check for lump specific name...
+        int lump_number = wads.CheckNumForFullName(lump_name);
+        //console.printf("lump num %i", lump_number);
+        if(lump_number > 0)
+        {
+            //console.printf("found lump");
+            ///...and read it if it exist...
+            parsed_lump = wads.ReadLump(lump_number);
+            //...and if reading sucssesfull aka lump actually have something
+            if(parsed_lump)
+            {
+                //console.printf("starting read lump");
+                //...read it
+                //now gets rid if single line comments...
+                while(parsed_lump.IndexOf("//") != -1)
+                {
+                    int start = parsed_lump.IndexOf("//");
+                    int end = parsed_lump.IndexOf("\n",start)+1;
+                    parsed_lump.Remove(start,end-start);
+                }
+                //...and multi lined comment
+                while(parsed_lump.IndexOf("/*") != -1)
+                {
+                    int start = parsed_lump.IndexOf("/*");
+                    int end = parsed_lump.IndexOf("*/",start)+2;
+                    parsed_lump.Remove(start,end-start);
+                }
+
+                //console.printf("delete comments");
+                //position which parser reached right now
+                uint last_reached_position = 0;
+                //count how much times it enter in brackets of any kind
+                int times_in_bracket = 0;
+                //now parse what has been left from the lump
+                bool still_parsing = true;
+                ///root pairs
+                array<json_key_value> root_data;
+                array<json_nested_object> object_data;
+                
+                while(last_reached_position < parsed_lump.length() )
+                {
+                    //if(json_debugger)
+                        //console.printf("read lump");
+                    int cur_byte = parsed_lump.byteat(last_reached_position);
+                    if(cur_byte <= 32)//all nonprintable characters, skip them
+                    {
+                        //console.printf("dummy byte, pos %i, size %i", last_reached_position, parsed_lump.length() );
+                        last_reached_position++;
+                        continue;
+                    }
+                    //if already in "bracketed" area
+                    if(times_in_bracket > 0)
+                    {
+                        if(json_debugger)
+                            console.printf("step inside brackets, pos %i, size %i", last_reached_position, parsed_lump.length() );
+                        //check, maybe it step outside of it at this step
+                        if(cur_byte == ASCII_BraceC)
+                        {
+                            if(json_debugger)
+                                console.printf("step out of brackets, pos %i, size %i", last_reached_position, parsed_lump.length() );
+                            times_in_bracket--;
+                            last_reached_position++;
+                            if(times_in_bracket < 0)
+                            {
+                                throwabortexception("JSON parser: negative brackets count");
+                                break;
+                                return;
+                            }
+                            continue;
+                        }
+                        //since it inside backets looks for " char
+                        //since all keys in JSON should starts with "
+                        if(cur_byte != ASCII_DblQuote)
+                        {
+                            if(json_debugger)
+                                console.printf("wrong byte, pos %i, size %i", last_reached_position, parsed_lump.length() );
+                            error_handler(last_reached_position);
+                            break;
+                            return;
+                        }
+                        last_reached_position++;
+
+                        json_key_value kv = json_key_value(new("json_key_value") );
+                        array<int> symbols;
+                        symbols.clear();
+                        symbols.push(ASCII_DblQuote);
+                        //read it to the second " (end of line)
+                        int key_length = seek_for(last_reached_position, symbols);
+                        //-- because it return length of a string with " on the end
+                        //and we dont need it
+                        key_length--;
+                        string key, key_value;
+                        key = key_value = "";
+                        key = parsed_lump.mid(last_reached_position, key_length);
+                        kv.key = key;
+                        if(json_debugger)
+                            console.printf("key is "..key);
+                        last_reached_position += key_length+1;
+
+                        //now look for the :
+                        symbols.clear();
+                        symbols.push(ASCII_Colon);
+                        int colon = seek_for(last_reached_position, symbols, SFF_IGNORE_NON_PRINTABLE|SFF_STOP_ON_NOT_MATCHING);
+                        //throw error if there are some symbols between last quote and colon
+                        if(colon < 0)
+                            error_handler(last_reached_position);
+
+                        last_reached_position += colon;
+                        //if(json_debugger)
+                            //console.printf("colon is "..parsed_lump.mid(last_reached_position-1, 1) );
+                        //now guessing data type
+                        uint data_type = JDT_NONE;
+                        int counter = 0;
+                        while(data_type == JDT_NONE)
+                        {
+                            get_data_type(last_reached_position + counter, data_type);
+                            counter ++;
+                        }
+                        //read data here
+                        int data_end = 0;
+                        if(data_type == JDT_UNKNOWN)
+                            error_handler(last_reached_position + counter);
+                        else if(data_type == JDT_STRING)
+                        {
+                            symbols.clear();
+                            symbols.push(ASCII_DblQuote);
+                            data_end = seek_for(last_reached_position + counter, symbols);
+                            data_end--;//to get rid of quotation on the end of the line
+                            key_value = parsed_lump.mid(last_reached_position + counter, data_end);
+                            kv.jlines = key_value;
+                            kv.value_flag = data_type;
+                            last_reached_position += data_end + counter + 1;
+                        }
+                        else if(data_type == JDT_NUMBER)
+                        {
+                            last_reached_position--;//position on first digit already know, its current position
+                            data_end = number_length(last_reached_position + counter);
+                            key_value = parsed_lump.mid(last_reached_position + counter, data_end);
+                            kv.number = key_value.todouble();
+                            kv.value_flag = data_type;
+                            last_reached_position += data_end + counter;
+                        }
+                        else if(data_type == JDT_ARRAY)
+                        {
+                            if(json_debugger)
+                                console.printf("stumble upon array, it know it there, it just skipping it");
+                            //parse_array(last_reached_position + counter, kv);
+                            symbols.clear();
+                            symbols.push(ASCII_BrackC);
+                            data_end = seek_for(last_reached_position, symbols, SFF_IGNORE_NON_PRINTABLE);
+                            if(json_debugger)
+                                console.printf("pos %i, ending %i", last_reached_position, data_end + last_reached_position);
+                            last_reached_position += data_end - 1;
+                            kv.value_flag = data_type;
+                        }
+                        else if(data_type == JDT_NESTED_OBJECT)
+                        {
+                            if(json_debugger)
+                                console.printf("nested object, skipping it because Im lazy");
+
+                            int object_amount = times_in_bracket - 2;
+                            int last_object = object_data.size() - 1;
+                            json_nested_object nw = json_nested_object(new("json_nested_object"));
+                            nw.key = key;
+                            if(last_object >= 0)
+                            {
+                                json_nested_object current_object = json_nested_object(object_data[last_object]);
+                                for(uint i = 0; i < object_amount; i++)
+                                {
+                                    int last_object = current_object.internal_objects.size() - 1;
+                                    if(last_object < 0)
+                                        throwabortexception("JSON parser: invalid last object in the array");
+                                    current_object = json_nested_object(current_object.internal_objects[last_object]);
+                                }
+                                current_object.internal_objects.push(nw);
+                            }
+                            else
+                                object_data.push(nw);
+                            //since onbject are located inside {}
+                            times_in_bracket++;
+                            //to properly enter in object, wee need to set last position after it brakets
+                            symbols.clear();
+                            symbols.push(ASCII_BraceO);
+                            data_end = seek_for(last_reached_position, symbols);
+                            last_reached_position += data_end + counter;
+                            continue;
+                        }
+
+                        if(json_debugger)
+                            console.printf("key \"%s\", value \"%s\", pos %i", key, key_value, last_reached_position);
+                        //seek for line ending, coma or closing curved bracket
+                        //to properly exit from this loop
+                        symbols.clear();
+                        symbols.push(ASCII_Comma);
+                        symbols.push(ASCII_BraceC);
+                        int line_ending = seek_for(last_reached_position, symbols, SFF_IGNORE_NON_PRINTABLE|SFF_STOP_ON_NOT_MATCHING);
+                        //throw error if there are some symbols between key data and coma/bracket
+                        if(line_ending < 0)
+                            error_handler(last_reached_position);
+                        
+                        if(times_in_bracket == 1)
+                            root_data.push(kv);
+                        else if(times_in_bracket > 1)
+                        {
+                            int object_amount = times_in_bracket - 2;
+                            json_nested_object current_object = json_nested_object(object_data[object_data.size() - 1]);
+                            for(uint i = 0; i < object_amount; i++)
+                            {
+                                int last_object = current_object.internal_objects.size() - 1;
+                                if(last_object < 0)
+                                    throwabortexception("JSON parser: invalid last object in the array");
+                                current_object = json_nested_object(current_object.internal_objects[last_object]);
+                            }
+                            current_object.nested_key_value.push(kv);
+                        }
+
+                        if(parsed_lump.byteat(last_reached_position + line_ending) == ASCII_BraceC)
+                            times_in_bracket--;
+                        
+                        if(times_in_bracket < 0)
+                            error_handler(last_reached_position, ETF_CURVED_BRACKET);
+
+                        last_reached_position += line_ending+1;
+
+                    }
+                    //else look for curved brackets
+                    else
+                    {
+                        //if symbol is an opening curved bracket
+                        if(cur_byte == ASCII_BraceO)
+                        {
+                            if(json_debugger)
+                                console.printf("opening bracket, pos %i, size %i", last_reached_position, parsed_lump.length() );
+                            //increase counters
+                            times_in_bracket++;
+                            last_reached_position++;
+                            continue;
+                        }
+                        //some unknown data before any brackets, probably error in file/parsing
+                        else
+                        {
+                            if(json_debugger)
+                                console.printf("wrong symbol outside brackets, pos %i, size %i", last_reached_position, parsed_lump.length() );
+                            error_handler(last_reached_position);
+                            break;
+                            return;
+                        }
+                    }
+                    last_reached_position++;
+                }
+
+                collection.structured_data.copy(root_data);
+                collection.structured_objects.copy(object_data);
+            }
+        }
+    }
+
+}

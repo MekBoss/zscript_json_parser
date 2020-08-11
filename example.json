@@ -1,0 +1,44 @@
+//hi, this is a qucik intro to wlightly modified JSON language specification
+//which are used in this library
+
+//this is lined comment
+
+/*
+this 
+s
+a
+multilined
+comment
+*/
+
+//an entry point
+//each pair must be enclosed in the following brackets
+{
+    //it would create pair with the name "example" and with value "13"
+    //note, name enclosed in " from both sides
+    //also the name is separated from the value by a sign :
+    //comma at the end are necessary if there are another pair after this
+    "example" : 13,
+    //note, if number enclosed in " it would be treated as string and not a number
+    "string_example" : "13",//not same 13 as above
+    //value can be or number or string
+    "sample text" : "can you read me?",
+    "number" : 1337,
+    //next example produ=ce error
+    "tottaly not an error" : error,
+
+    //this create nested object
+    "test object" :
+    {
+        //syntax and rules are same as above
+        //point of this is to group several different values under one name
+        "sample text" : "is this thing on?",
+        //last pair
+        //no trailing comma are needed
+        "number" : 800
+    }, //closing bracket still require coma at the end
+
+    //last pair
+    //no trailing comma are needed
+    "end_value" : "stop"
+}//no coma required at the final brackets

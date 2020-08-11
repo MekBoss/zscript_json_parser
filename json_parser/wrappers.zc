@@ -1,0 +1,267 @@
+//base key-value wrapper
+//should not be called directly, only through methods
+class json_key_value
+{
+    //name of the field in json file
+    string key;
+    //type of data: number, string, bool, etc
+    uint value_flag;
+    //also used for bool
+    double number;
+    string jlines;
+
+    array<double> all_numbers;
+    array<string> all_jlines;
+    
+    string get_key() const
+    {
+        return key;
+    }
+
+    virtual void get_key_value(in out json_return_wrapper ret)
+    {
+        //ret = new("json_return_wrapper");
+        switch(value_flag)
+        {
+            case JDT_NUMBER:
+                ret.number = number;
+                ret.data_type = JDT_NUMBER;
+            break;
+
+            case JDT_STRING:
+                ret.letters = jlines;
+                ret.data_type = JDT_STRING;
+            break;
+            
+            case JDT_ARRAY:
+                ret.letters = jlines;
+                ret.data_type = JDT_STRING;
+            break;
+            
+            case JDT_BOOL_FALSE:
+                ret.number = number;
+                ret.data_type = JDT_BOOL_FALSE;
+            break;
+
+            case JDT_BOOL_TRUE:
+                ret.number = number;
+                ret.data_type = JDT_BOOL_TRUE;
+            break;
+
+            default:
+            break;
+        }
+        
+    }
+
+}
+
+//nested object wrapper
+//also able to store
+//again should not be called directly, only through dedicated methods
+class json_nested_object : json_key_value
+{
+    array<json_key_value> nested_key_value;
+    array<json_nested_object> internal_objects;
+
+    int is_contain(string n)
+    {
+        for(uint i = 0; i < internal_objects.size(); i++)
+        {
+            if(internal_objects[i] && json_key_value(internal_objects[i]).get_key() == n)
+            {
+                return i;
+                break;
+            }
+        }
+
+        return -1;
+    }
+
+    virtual void get_value(string key_name, out json_return_wrapper st)
+    {
+        for(uint i = 0; i < nested_key_value.size(); i++)
+        {
+            if(nested_key_value[i] && json_key_value(nested_key_value[i]).get_key() == key_name)
+                json_key_value(nested_key_value[i]).get_key_value(st);
+        }
+    }
+}
+
+//parsed data storge
+//aka thing that actually are stored after parser finish parsing
+class json_parsed_data
+{
+    array<json_key_value> structured_data;
+    array<json_nested_object> structured_objects;
+    //get variable value from name
+    //"type" is a name of the variable, ret is specific struct
+    //to search for nested object value use "object_name:variable_name"
+    //if search for more than one object, syntax same "first_object_name:second_object_name:...etc..:variable_name"
+    //it uses specific struct for return arguments, which should be used as one of the function arguments
+    void get_data(string type, in out json_return_wrapper ret)
+    {
+        //firstly split type argument on substrings
+        //maybe it need to search value in nested objects
+        array<string> object_keys;
+        object_keys.clear();
+        bool search_specific_objects = false;
+        type.split(object_keys, ":");
+        //if there are several names to search
+        if(object_keys.size() > 1)
+        {
+            json_nested_object cur_object;
+            uint cur_key = 0;
+            for(uint i = 0; i <= structured_objects.size(); i++)
+            {
+                if(i == structured_objects.size())
+                {
+                    throwabortexception("JSON parser: there are no object with name %s", object_keys[cur_key]);
+                }
+                if(structured_objects[i] && json_nested_object(structured_objects[i]).get_key() == object_keys[cur_key])
+                {
+                    cur_object = json_nested_object(structured_objects[i]);
+                    cur_key++;
+                }
+            }
+
+            //check in every object and in objects of object if there are more than two variables to search
+            while(cur_key < object_keys.size() - 1)
+            {
+                json_nested_object c_obj = json_nested_object(cur_object);
+                for(uint i = 0; i <= c_obj.internal_objects.size(); i++)
+                {
+                    if(i == c_obj.internal_objects.size())
+                    {
+                        throwabortexception("JSON parser: there are no object with name %s", object_keys[cur_key]);
+                    }
+                    if(c_obj.internal_objects[i] && json_nested_object(c_obj.internal_objects[i]).get_key() == object_keys[cur_key])
+                    {
+                        cur_object = c_obj.internal_objects[i];
+                        cur_key++;
+                        break;
+                    }
+                }
+            }
+
+            //final step, finallyh return value of variable under final string in the row
+            json_nested_object obj = json_nested_object(cur_object);
+            for(uint i = 0; i <= obj.nested_key_value.size(); i++)
+            {
+                if(i == obj.nested_key_value.size())
+                {
+                    throwabortexception("JSON parser: there are no variable with name %s", object_keys[cur_key]);
+                }
+                if(obj.nested_key_value[i] && json_key_value(obj.nested_key_value[i]).get_key() == object_keys[cur_key])
+                {
+                    json_key_value(obj.nested_key_value[i]).get_key_value(ret);
+                    break;
+                }
+            }
+        }
+        //if there are only one word, search for it in root pairs array
+        else
+            for(uint i = 0; i <= structured_data.size(); i++)
+            {
+                if(i == structured_data.size())
+                {
+                    throwabortexception("JSON parser: there are no variable with name %s", type);
+                }
+                if(structured_data[i] && json_key_value(structured_data[i]).get_key() == type)
+                {
+                    json_key_value(structured_data[i]).get_key_value(ret);
+                    break;
+                }
+            }
+    }
+    //debug
+    //print name and value for every single stored pair
+    void print_info()
+    {
+        console.printf("root objecs data");
+        for(uint i = 0; i < structured_data.size(); i++)
+        {
+            json_return_wrapper ret;
+            if(!structured_data[i])
+            {
+                console.printf("no object %i", i);
+                continue;
+            }
+            json_key_value(structured_data[i]).get_key_value(ret);
+            switch(ret.data_type)
+            {
+                case 0:
+                case JDT_UNKNOWN:
+                default:
+                break;
+
+                case JDT_NUMBER:
+                    console.printf("key \"%s\", value \"%f\" ", json_key_value(structured_data[i]).get_key(), ret.number );
+                break;
+                case JDT_STRING:
+                    console.printf("key \"%s\", value \"%s\" ", json_key_value(structured_data[i]).get_key(), ret.letters );
+                break;
+                case JDT_ARRAY:
+                    console.printf("key \"%s\", array size text %i, number %i ", json_key_value(structured_data[i]).get_key(), ret.letters_set.size(), ret.numbers_set.size() );
+                break;
+                case JDT_BOOL_FALSE:
+                    console.printf("key \"%s\", number %f ", json_key_value(structured_data[i]).get_key(), ret.number);
+                break;
+                case JDT_BOOL_TRUE:
+                    console.printf("key \"%s\", number %f ", json_key_value(structured_data[i]).get_key(), ret.number );
+                break;
+            }
+        }
+
+        console.printf("nested objects data");
+        for(uint i = 0; i < structured_objects.size(); i++)
+        {
+            console.printf("object name %s", json_nested_object(structured_objects[i]).get_key() );
+            for(uint j =0; j < json_nested_object(structured_objects[i]).nested_key_value.size(); j++)
+            {
+                json_return_wrapper ret;
+                let obj = json_key_value(json_nested_object(structured_objects[i]).nested_key_value[j]);
+                obj.get_key_value(ret);
+                switch(ret.data_type)
+                {
+                    case 0:
+                    case JDT_UNKNOWN:
+                    default:
+                    break;
+
+                    case JDT_NUMBER:
+                        console.printf("key \"%s\", value \"%f\" ", obj.get_key(), ret.number );
+                    break;
+                    case JDT_STRING:
+                        console.printf("key \"%s\", value \"%s\" ", obj.get_key(), ret.letters );
+                    break;
+                    case JDT_ARRAY:
+                        console.printf("key \"%s\", array size text %i, number %i ", obj.get_key(), ret.letters_set.size(), ret.numbers_set.size() );
+                    break;
+                    case JDT_BOOL_FALSE:
+                        console.printf("key \"%s\", number %i ", obj.get_key(), ret.number);
+                    break;
+                    case JDT_BOOL_TRUE:
+                        console.printf("key \"%s\", number %i ", obj.get_key(), ret.number );
+                    break;
+                }
+            }
+
+            //json_key_value(structured_objects[i]).internal_objects.size();
+            //switch(ret.data_type)
+        }
+
+    }
+}
+
+//special struct to return key value
+//reason of existing, zscript does not allow function overloading and templates
+struct json_return_wrapper
+{
+    double number;
+    string letters;
+    array<double> numbers_set;
+    array<string> letters_set;
+
+    uint data_type;
+}
