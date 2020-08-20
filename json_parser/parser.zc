@@ -35,6 +35,7 @@ class json_parser
     {
         if(parsed_lump && pos )
         {
+            //lenght  used otside of the loop, so init it here
             int length = 0;
             for(; length <= parsed_lump.length(); length++)
             {
@@ -43,6 +44,8 @@ class json_parser
                     length = -10000;
                     break;
                 }
+                //since break break only one loop, and zscript lack goto exit_loop;
+                //init bool value here which would break execution of the "main" for loop
                 bool break_here = false;
                 int byte = parsed_lump.byteat(pos + length);
                 //ignore spaces
@@ -77,7 +80,7 @@ class json_parser
 
             return length+1;
         }
-
+        //something goes wrong, notify about it руку
         return -1;
     }
 
@@ -111,23 +114,31 @@ class json_parser
             throwabortexception("JSON parser: closing bracket at %i", line_number);
         }
     }
-
+    
+    //count length sequence from numbers and . character
     private int number_length(int pos)
     {
         int len = 0;
+        bool meet_period = false;
         for(; len < parsed_lump.length(); len++)
         {
             int b = parsed_lump.byteat(pos + len);
-            if(b >= ASCII_0 && b <= ASCII_9 || b == ASCII_Period)
+            //continue if number
+            if(b >= ASCII_0 && b <= ASCII_9)
             continue;
+            //it can meet only one period
+            else if(b == ASCII_Period && meet_period == false)
+                meet_period = true;
             else break;
         }
 
         return len;
     }
     //parse array aka all content between [ ] brackets
+    //did not work for now
     private void parse_array(int pos, in out json_key_value obj)
     {
+        //step inside of array if pos located right at the opening bracket
         if(parsed_lump.byteat(pos) == ASCII_BrackO) pos++;
         //firstly check, maybe its array of arrays
         //if so break, because implementing of support for this
@@ -157,11 +168,14 @@ class json_parser
         }
         counter--;
         //read data here
+        //if encountered data looks like a string
+        //push a " into seeking array
         if(data_type == JDT_STRING)
         {
             seeking.clear();
             seeking.push(ASCII_DblQuote);
         }
+        //if like a number, push numbers and period into seeking array 
         else if(data_type == JDT_NUMBER)
         {
             seeking.clear();
@@ -180,11 +194,12 @@ class json_parser
         }
         else
             throwabortexception("JSON parser: it only have support for string and number array");
-        
+        //preparing both arrrays here because no templates and function overloading
         array<string> array_strings; array_strings.clear();
         array<double> array_numbers; array_numbers.clear();
+        //array for coma , thing
         array<int> comma; comma.clear(); comma.push(ASCII_Comma); comma.push(ASCII_BrackC);
-
+        //after all preparations now actually parse an array
         for(int array_pos = 0; array_pos < closing_bracket; array_pos++)
         {
             if(data_type == JDT_STRING)
@@ -209,7 +224,7 @@ class json_parser
                 
                 array_pos += coma;
             }
-            if(data_type == JDT_NUMBER)
+            else if(data_type == JDT_NUMBER)
             {
                 int beginning = seek_for(pos + array_pos, seeking, SFF_IGNORE_NON_PRINTABLE);
                 beginning--;
@@ -230,6 +245,8 @@ class json_parser
                 
                 array_pos += coma;
             }
+            //better safe than sorry
+            else break;
         }
         if(json_debugger)
         {
@@ -457,13 +474,27 @@ class json_parser
                         //throw error if there are some symbols between key data and coma/bracket
                         if(line_ending < 0)
                             error_handler(last_reached_position);
-                        
+                        //now decide where to push parsed pair
+                        //something goes wrong, oh no
+                        if(times_in_bracket < 0)
+                            error_handler(last_reached_position, ETF_CURVED_BRACKET);
+                            
+                        //if it in the root "namespcae" push it into the root
                         if(times_in_bracket == 1)
                             root_data.push(kv);
+                        //logic here is next
+                        //if parser alredy in nested object
+                        //seek for the last pushed nested object (inside of another the nested objects)
+                        //after finding it push new pair to it
                         else if(times_in_bracket > 1)
                         {
+                            // - 2 because
+                            //inside root object, so already inside minimum one bracket
+                            //and because it picking the last object in the next line
                             int object_amount = times_in_bracket - 2;
                             json_nested_object current_object = json_nested_object(object_data[object_data.size() - 1]);
+                            //picking last object in the array of objects of current object
+                            //thats too much object in one sentence
                             for(uint i = 0; i < object_amount; i++)
                             {
                                 int last_object = current_object.internal_objects.size() - 1;
@@ -473,15 +504,13 @@ class json_parser
                             }
                             current_object.nested_key_value.push(kv);
                         }
-
+                        //reduce amount of brackets only now
+                        //so that previous check properly add parsed pair to the array
                         if(parsed_lump.byteat(last_reached_position + line_ending) == ASCII_BraceC)
                             times_in_bracket--;
-                        
-                        if(times_in_bracket < 0)
-                            error_handler(last_reached_position, ETF_CURVED_BRACKET);
-
+                        //step into the next line now
+                        //to properly step iteration
                         last_reached_position += line_ending+1;
-
                     }
                     //else look for curved brackets
                     else
